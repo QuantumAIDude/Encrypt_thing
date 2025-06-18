@@ -1,4 +1,11 @@
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import base64
+import json
+from cryptography import x509
 import os
 
 
@@ -8,39 +15,83 @@ base_path = "/Users/quinnesser/Documents/"
 filename = input("Please enter file name here:").strip()
 
 
-def Generate_key():
-    return Fernet.generate_key()
+def Asymetric_Encryption(input_path, output_path, cert_path="cert.txt"):
+    # Load the certificate
+    with open(cert_path, "rb") as cert_file:
+        cert_data = cert_file.read()
+        cert = x509.load_pem_x509_certificate(cert_data, default_backend())
+        public_key = cert.public_key()
 
+    symmetric_key = Fernet.generate_key()
+    fernet = Fernet(symmetric_key)
 
-def Encrypt(key, input_path, output_path):
-    fernet = Fernet(key)
+    # Encrypt the data using the symmetric key
     with open(input_path, "rb") as file:
-        original = file.read()
-    encrypted = fernet.encrypt(original)
-    with open(output_path, "wb") as file:
-        file.write(encrypted)
+        data = file.read()
+        encrypted_data = fernet.encrypt(data)
+
+    # Encrypt the symmetric key using the public key
+    encrypted_key = public_key.encrypt(
+        symmetric_key,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+    # Save encrypted data + encrypted key as a JSON object
+    wrapper = {
+        "encrypted_key": base64.b64encode(encrypted_key).decode("utf-8"),
+        "encrypted_data": base64.b64encode(encrypted_data).decode("utf-8")
+    }
+
+    with open(output_path, "w") as f:
+        json.dump(wrapper, f)
 
 
-def Decrypt(key, input_path, output_path):
-    fernet = Fernet(key)
-    with open(input_path, "rb") as file:
-        original = file.read()
-    decrypted = fernet.decrypt(original)
-    with open(output_path, "wb") as file:
-        file.write(decrypted)
+def Asymetric_Decryption(input_path, output_path, key_path = "key.txt"):
+    with open(key_path, "rb") as key_file:
+        private_key = serialization.load_pem_private_key(
+            key_file.read(),
+            password=None
+        )
+
+    # Load encrypted key + data
+    with open(input_path, "r") as f:
+        wrapper = json.load(f)
+
+    encrypted_key = base64.b64decode(wrapper["encrypted_key"])
+    encrypted_data = base64.b64decode(wrapper["encrypted_data"])
+
+
+    symmetric_key = private_key.decrypt(
+        encrypted_key,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+
+    fernet = Fernet(symmetric_key)
+    decrypted = fernet.decrypt(encrypted_data)
+
+    with open(output_path, "wb") as f:
+        f.write(decrypted)
+
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
     try:
-        choice = input("Would you like to generate a new key? (Y/N): ").strip().upper()
 
-        if choice == "Y":
-            with open("file.key", "wb") as key_file:
-                key_file.write(Generate_key())
-            print("New key generated and saved to file.key.")
-
-
-        with open("file.key", "rb") as key_file:
-            key = key_file.read()
 
 
         input_path = os.path.join(base_path, filename)
@@ -49,20 +100,19 @@ if __name__ == "__main__":
             exit()
 
 
-        choice2 = input("Press 1 for Encryption or 2 for Decryption: ").strip()
-        if choice2 not in ("1", "2"):
-            print("Invalid option.")
-            exit()
-
-
         output_path = input("Enter output file path (leave blank to overwrite the original): ").strip()
         if output_path == "":
             output_path = input_path
 
 
-        if choice2 == "1":
-            Encrypt(key, input_path, output_path)
-            print(f"File encrypted successfully and saved to {output_path}")
+            cert_or_key = input("Press E for encyption or D for decyption: ").strip().upper()
+            if cert_or_key == "E":
+              Asymetric_Encryption(input_path, output_path)
+              print("File encrypted using public certificate!")
+            elif cert_or_key == "D":
+                Asymetric_Decryption(input_path, output_path)
+                print("File decrypted using private key!")
+
         else:
             Decrypt(key, input_path, output_path)
             print(f"File decrypted successfully and saved to {output_path}")
